@@ -160,6 +160,21 @@
   }
   .remove:hover{background:var(--danger-soft); color:var(--danger);}
 
+  li.file-item.is-duplicate{background:#FFF8ED;}
+  .dup-warning{
+    display:flex; align-items:center; flex-wrap:wrap; gap:8px;
+    font-size:12px; color:#8A5A12; background:#FDECC8;
+    border:1px solid #F0D394; border-radius:7px;
+    padding:6px 10px; margin-top:6px;
+  }
+  .dup-warning .dup-actions{display:flex; gap:10px; margin-left:auto;}
+  .dup-warning button{
+    border:none; background:none; font-size:12px; font-weight:600;
+    cursor:pointer; padding:0; text-decoration:underline;
+  }
+  .dup-remove{color:var(--danger);}
+  .dup-keep{color:#8A5A12;}
+
   .empty-state{
     padding:32px 20px; text-align:center; color:var(--ink-soft); font-size:13.5px;
   }
