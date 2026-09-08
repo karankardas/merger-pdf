@@ -93,6 +93,28 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script>
+  // docx sometimes fails to load from the primary CDN — fall back automatically.
+  window.__docxReady = (async function ensureDocx(){
+    if (typeof docx !== 'undefined') return;
+    const fallbacks = [
+      'https://unpkg.com/docx@8.5.0/build/index.umd.min.js',
+      'https://cdnjs.cloudflare.com/ajax/libs/docx/8.5.0/docx.umd.min.js'
+    ];
+    for (const src of fallbacks){
+      if (typeof docx !== 'undefined') return;
+      try {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = src;
+          s.onload = resolve;
+          s.onerror = reject;
+          document.head.appendChild(s);
+        });
+      } catch(e){ /* try next fallback */ }
+    }
+  })();
+</script>
 <script src="index.js"></script>
   
 </body>
