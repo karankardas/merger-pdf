@@ -99,7 +99,9 @@
         file,
         type: isPdf ? 'pdf' : 'image',
         thumb: null,
-        pageCount: null
+        pageCount: null,
+        isDuplicate: false,
+        dismissedDuplicate: false
       };
       files.push(item);
       if (item.type === 'image'){
@@ -130,7 +132,22 @@
     }
   }
 
+  function recomputeDuplicates(){
+    const seen = new Map();
+    for (const item of files){
+      const key = item.file.name.trim().toLowerCase() + '|' + item.file.size;
+      if (seen.has(key)){
+        item.isDuplicate = !item.dismissedDuplicate;
+      } else {
+        item.isDuplicate = false;
+        seen.set(key, true);
+      }
+    }
+  }
+
   function render(){
+    recomputeDuplicates();
+
     listPanel.style.display = files.length > 0 || controlsPanel.style.display !== 'none' ? 'block' : 'none';
     controlsPanel.style.display = files.length > 0 ? 'block' : 'none';
     listPanel.style.display = files.length > 0 ? 'block' : 'none';
@@ -145,14 +162,23 @@
             ? `<span style="font-size:10px;color:#5B6472;font-family:'JetBrains Mono',monospace;">PDF</span>`
             : `<span style="font-size:10px;color:#5B6472;">…</span>`);
       const pages = item.pageCount ? ` · ${item.pageCount} page${item.pageCount > 1 ? 's' : ''}` : '';
+      const dupWarning = item.isDuplicate ? `
+            <div class="dup-warning">
+              <span>⚠ This looks like a duplicate of a file already in the list.</span>
+              <span class="dup-actions">
+                <button class="dup-remove" data-id="${item.id}">Remove this</button>
+                <button class="dup-keep" data-id="${item.id}">Keep anyway</button>
+              </span>
+            </div>` : '';
       return `
-        <li class="file-item" draggable="true" data-id="${item.id}">
+        <li class="file-item${item.isDuplicate ? ' is-duplicate' : ''}" draggable="true" data-id="${item.id}">
           <span class="handle">⠿</span>
           <span class="badge">${String(index + 1).padStart(2,'0')}</span>
           <div class="thumb">${thumbHtml}</div>
           <div class="meta">
             <div class="name">${escapeHtml(item.file.name)}</div>
             <div class="sub-meta">${item.type.toUpperCase()} · ${formatSize(item.file.size)}${pages}</div>
+            ${dupWarning}
           </div>
           <button class="remove" data-id="${item.id}" title="Remove">✕</button>
         </li>`;
@@ -184,11 +210,28 @@
 
   // Remove + reorder
   fileListEl.addEventListener('click', (e) => {
-    const btn = e.target.closest('.remove');
-    if (!btn) return;
-    const id = btn.dataset.id;
-    files = files.filter(f => f.id !== id);
-    render();
+    const removeBtn = e.target.closest('.remove');
+    if (removeBtn){
+      const id = removeBtn.dataset.id;
+      files = files.filter(f => f.id !== id);
+      render();
+      return;
+    }
+    const dupRemoveBtn = e.target.closest('.dup-remove');
+    if (dupRemoveBtn){
+      const id = dupRemoveBtn.dataset.id;
+      files = files.filter(f => f.id !== id);
+      render();
+      return;
+    }
+    const dupKeepBtn = e.target.closest('.dup-keep');
+    if (dupKeepBtn){
+      const id = dupKeepBtn.dataset.id;
+      const item = files.find(f => f.id === id);
+      if (item) item.dismissedDuplicate = true;
+      render();
+      return;
+    }
   });
 
   let dragSrcIndex = null;
@@ -298,8 +341,9 @@
         const buf = await item.file.arrayBuffer();
         const dims = await getImageDimensions(item.file);
         const size = fitToDocWidth(dims.width, dims.height);
+        const imgType = (item.file.type === 'image/png' || /\.png$/i.test(item.file.name)) ? 'png' : 'jpg';
         children.push(new Paragraph({
-          children: [ new ImageRun({ data: buf, transformation: size }) ]
+          children: [ new ImageRun({ type: imgType, data: new Uint8Array(buf), transformation: size }) ]
         }));
       } else {
         const buf = await item.file.arrayBuffer();
@@ -315,7 +359,7 @@
           const pngBuf = await pngBlob.arrayBuffer();
           const size = fitToDocWidth(viewport.width, viewport.height);
           children.push(new Paragraph({
-            children: [ new ImageRun({ data: pngBuf, transformation: size }) ]
+            children: [ new ImageRun({ type: 'png', data: new Uint8Array(pngBuf), transformation: size }) ]
           }));
           if (p < pdf.numPages){
             children.push(new Paragraph({ children: [ new PageBreak() ] }));
@@ -334,6 +378,10 @@
 
   mergeBtn.addEventListener('click', async () => {
     if (files.length === 0) return;
+
+    if (outputFormat === 'docx' && window.__docxReady){
+      await window.__docxReady;
+    }
 
     if (typeof PDFLib === 'undefined' || typeof pdfjsLib === 'undefined' || (outputFormat === 'docx' && typeof docx === 'undefined')){
       statusText.textContent = 'Could not load a required library — check your internet connection and reload.';
