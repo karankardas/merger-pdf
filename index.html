@@ -29,7 +29,7 @@
   </header>
 
   <div class="dropzone" id="dropzone">
-    <input type="file" id="fileInput" multiple accept=".pdf,.png,.jpg,.jpeg,.zip,application/pdf,image/png,image/jpeg,application/zip,application/x-zip-compressed">
+    <input type="file" id="fileInput" multiple accept=".pdf,.png,.jpg,.jpeg,.zip,.html,.htm,application/pdf,image/png,image/jpeg,application/zip,application/x-zip-compressed,text/html">
     <div class="stack">
       <svg width="52" height="52" viewBox="0 0 52 52" fill="none">
         <rect x="12" y="8" width="26" height="34" rx="3" fill="#F0F1F3" stroke="#C7CCD4" stroke-width="1.5" transform="rotate(-8 25 25)"/>
@@ -40,8 +40,37 @@
         <line x1="19" y1="32" x2="28" y2="32" stroke="#2A4BD7" stroke-width="1.4" stroke-linecap="round"/>
       </svg>
     </div>
-    <p><strong>Drop PDFs, images, or a .zip here</strong>, or click to browse</p>
-    <div class="sub" id="dropSub">Accepts .pdf, .png, .jpg, and .zip (extracted automatically) — add as many as you like</div>
+    <p><strong>Drop PDFs, images, .html, or a .zip here</strong>, or click to browse</p>
+    <div class="sub" id="dropSub">Accepts .pdf, .png, .jpg, .html, and .zip — or just paste a copied image with Ctrl+V / Cmd+V</div>
+  </div>
+
+  <div class="drive-row">
+    <button class="drive-btn" id="driveBtn" type="button">
+      <svg width="16" height="16" viewBox="0 0 24 24"><path fill="#0F9D58" d="M8.3 17.3L2.4 7.5h7.9l5.9 9.8z"/><path fill="#FFCF44" d="M9.9 2h7.6l-5.6 9.8H4.3z"/><path fill="#4285F4" d="M14.3 17.3h7.3L15.2 6.4l-3.7 6.4z"/></svg>
+      Add from Google Drive
+    </button>
+    <span class="drive-status" id="driveStatus"></span>
+  </div>
+
+  <div class="drive-setup" id="driveSetup" style="display:none;">
+    <p class="drive-setup-title">Connect Google Drive (one-time setup)</p>
+    <p class="drive-setup-copy">
+      Picking files straight from Drive needs a free Google Cloud OAuth Client ID and API key, tied to the web address this page is hosted at. Create one in the
+      <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console</a>
+      (enable the <strong>Google Drive API</strong> and <strong>Google Picker API</strong>), then paste the values below. They're saved only in this browser.
+    </p>
+    <label class="drive-field">
+      <span>OAuth Client ID</span>
+      <input type="text" id="driveClientId" placeholder="xxxxxxxx.apps.googleusercontent.com">
+    </label>
+    <label class="drive-field">
+      <span>API key</span>
+      <input type="text" id="driveApiKey" placeholder="AIza...">
+    </label>
+    <div class="drive-setup-actions">
+      <button class="merge-btn" id="driveSaveBtn" type="button" style="padding:9px 18px;font-size:13px;">Save &amp; connect</button>
+      <button class="start-over" id="driveCancelBtn" type="button">Cancel</button>
+    </div>
   </div>
 
   <div class="panel" id="listPanel" style="display:none;">
@@ -93,7 +122,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-  <script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script>
   // docx sometimes fails to load from the primary CDN — fall back automatically.
   window.__docxReady = (async function ensureDocx(){
     if (typeof docx !== 'undefined') return;
