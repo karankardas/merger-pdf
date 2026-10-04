@@ -83,6 +83,40 @@
   .dropzone .sub{color:var(--ink-soft); font-size:13px; margin-top:4px;}
   .dropzone input{display:none;}
 
+  .drive-row{
+    display:flex; align-items:center; gap:12px; margin-top:14px; flex-wrap:wrap;
+  }
+  .drive-btn{
+    display:flex; align-items:center; gap:9px;
+    background:var(--card); border:1px solid var(--line); border-radius:9px;
+    padding:9px 14px; font-family:'Inter',sans-serif; font-size:13.5px; font-weight:500;
+    color:var(--ink); cursor:pointer; transition:border-color .12s ease, background .12s ease;
+  }
+  .drive-btn:hover{border-color:#C7CCD4; background:#FBFBFA;}
+  .drive-status{font-size:12.5px; color:var(--ink-soft);}
+  .drive-status.error{color:var(--danger);}
+
+  .drive-setup{
+    background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+    box-shadow:var(--shadow); margin-top:14px; padding:18px 20px;
+  }
+  .drive-setup-title{
+    font-family:'Fraunces',serif; font-weight:600; font-size:15px; margin:0 0 8px;
+  }
+  .drive-setup-copy{
+    font-size:13px; color:var(--ink-soft); line-height:1.55; margin:0 0 16px;
+  }
+  .drive-setup-copy a{color:var(--accent);}
+  .drive-field{display:block; margin-bottom:12px;}
+  .drive-field span{display:block; font-size:12.5px; font-weight:500; margin-bottom:5px;}
+  .drive-field input{
+    width:100%; border:1px solid var(--line); border-radius:8px; padding:9px 11px;
+    font-family:'JetBrains Mono',monospace; font-size:13px; background:var(--paper);
+    outline:none;
+  }
+  .drive-field input:focus{background:var(--accent-soft); border-color:var(--accent);}
+  .drive-setup-actions{display:flex; align-items:center; gap:16px; margin-top:4px;}
+
   .panel{
     background:var(--card);
     border:1px solid var(--line);
