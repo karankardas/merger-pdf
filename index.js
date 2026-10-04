@@ -1,25 +1,3 @@
-  // docx sometimes fails to load from the primary CDN — fall back automatically.
-  window.__docxReady = (async function ensureDocx(){
-    if (typeof docx !== 'undefined') return;
-    const fallbacks = [
-      'https://unpkg.com/docx@8.5.0/build/index.umd.min.js',
-      'https://cdnjs.cloudflare.com/ajax/libs/docx/8.5.0/docx.umd.min.js'
-    ];
-    for (const src of fallbacks){
-      if (typeof docx !== 'undefined') return;
-      try {
-        await new Promise((resolve, reject) => {
-          const s = document.createElement('script');
-          s.src = src;
-          s.onload = resolve;
-          s.onerror = reject;
-          document.head.appendChild(s);
-        });
-      } catch(e){ /* try next fallback */ }
-    }
-  })();
-</script>
-<script>
 (function(){
   if (window.pdfjsLib) {
     pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
@@ -62,6 +40,26 @@
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+  }
+
+  function blobToPngFile(blob, baseName){
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const url = URL.createObjectURL(blob);
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        canvas.getContext('2d').drawImage(img, 0, 0);
+        canvas.toBlob(pngBlob => {
+          URL.revokeObjectURL(url);
+          if (!pngBlob) return reject(new Error('Could not convert pasted image.'));
+          resolve(new File([pngBlob], baseName + '.png', { type: 'image/png' }));
+        }, 'image/png');
+      };
+      img.onerror = (e) => { URL.revokeObjectURL(url); reject(e); };
+      img.src = url;
+    });
   }
 
   async function renderHtmlToImageFile(file){
@@ -325,6 +323,41 @@
     await addFiles(dropped);
   });
 
+  window.addEventListener('paste', async (e) => {
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    const candidates = [];
+    for (const item of items){
+      if (item.kind === 'file' && item.type.startsWith('image/')){
+        const blob = item.getAsFile();
+        if (blob) candidates.push({ blob, type: item.type });
+      }
+    }
+    if (candidates.length === 0) return;
+    e.preventDefault();
+
+    const imageFiles = [];
+    for (let i = 0; i < candidates.length; i++){
+      const { blob, type } = candidates[i];
+      const stamp = Date.now() + (i ? '-' + i : '');
+      try {
+        if (type === 'image/png' || type === 'image/jpeg'){
+          const ext = type === 'image/png' ? 'png' : 'jpg';
+          imageFiles.push(new File([blob], `pasted-image-${stamp}.${ext}`, { type }));
+        } else {
+          const pngFile = await blobToPngFile(blob, `pasted-image-${stamp}`);
+          imageFiles.push(pngFile);
+        }
+      } catch(err){
+        console.error(err);
+      }
+    }
+    if (imageFiles.length === 0) return;
+    await addFiles(imageFiles);
+    setDropStatus(`Pasted ${imageFiles.length > 1 ? imageFiles.length + ' images' : 'an image'} — added to your list.`, false);
+    setTimeout(() => setDropStatus(), 2500);
+  });
+
   // Remove + reorder
   fileListEl.addEventListener('click', (e) => {
     const removeBtn = e.target.closest('.remove');
@@ -553,6 +586,179 @@
       mergeBtnText.textContent = 'Merge documents';
     }
   });
+
+  // --- Google Drive integration ---
+  const driveBtn = document.getElementById('driveBtn');
+  const driveStatus = document.getElementById('driveStatus');
+  const driveSetup = document.getElementById('driveSetup');
+  const driveClientIdInput = document.getElementById('driveClientId');
+  const driveApiKeyInput = document.getElementById('driveApiKey');
+  const driveSaveBtn = document.getElementById('driveSaveBtn');
+  const driveCancelBtn = document.getElementById('driveCancelBtn');
+
+  let driveTokenClient = null;
+  let driveAccessToken = null;
+  let driveLibsReady = null;
+
+  function setDriveStatus(msg, isError){
+    driveStatus.textContent = msg || '';
+    driveStatus.classList.toggle('error', !!isError);
+  }
+
+  function getDriveCreds(){
+    try {
+      return {
+        clientId: localStorage.getItem('stitch_gdrive_client_id') || '',
+        apiKey: localStorage.getItem('stitch_gdrive_api_key') || ''
+      };
+    } catch(e){
+      return { clientId: '', apiKey: '' };
+    }
+  }
+
+  function saveDriveCreds(clientId, apiKey){
+    try {
+      localStorage.setItem('stitch_gdrive_client_id', clientId);
+      localStorage.setItem('stitch_gdrive_api_key', apiKey);
+    } catch(e){ /* localStorage unavailable — credentials just won't persist */ }
+  }
+
+  function loadScriptOnce(src){
+    return new Promise((resolve, reject) => {
+      if (document.querySelector(`script[src="${src}"]`)){ resolve(); return; }
+      const s = document.createElement('script');
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = () => reject(new Error('Failed to load ' + src));
+      document.head.appendChild(s);
+    });
+  }
+
+  function ensureDriveLibs(){
+    if (!driveLibsReady){
+      driveLibsReady = (async () => {
+        await Promise.all([
+          loadScriptOnce('https://accounts.google.com/gsi/client'),
+          loadScriptOnce('https://apis.google.com/js/api.js')
+        ]);
+        await new Promise(resolve => gapi.load('picker', resolve));
+      })();
+    }
+    return driveLibsReady;
+  }
+
+  driveBtn.addEventListener('click', () => {
+    const { clientId, apiKey } = getDriveCreds();
+    if (!clientId || !apiKey){
+      driveClientIdInput.value = clientId;
+      driveApiKeyInput.value = apiKey;
+      driveSetup.style.display = 'block';
+      driveClientIdInput.focus();
+      return;
+    }
+    openDrivePicker(clientId, apiKey);
+  });
+
+  driveCancelBtn.addEventListener('click', () => {
+    driveSetup.style.display = 'none';
+  });
+
+  driveSaveBtn.addEventListener('click', () => {
+    const clientId = driveClientIdInput.value.trim();
+    const apiKey = driveApiKeyInput.value.trim();
+    if (!clientId || !apiKey){
+      setDriveStatus('Both fields are needed to connect.', true);
+      return;
+    }
+    saveDriveCreds(clientId, apiKey);
+    driveSetup.style.display = 'none';
+    setDriveStatus('');
+    openDrivePicker(clientId, apiKey);
+  });
+
+  async function openDrivePicker(clientId, apiKey){
+    setDriveStatus('Connecting to Google…', false);
+    try {
+      await ensureDriveLibs();
+    } catch(e){
+      console.error(e);
+      setDriveStatus('Could not load Google\u2019s libraries — check your connection.', true);
+      return;
+    }
+
+    if (!driveTokenClient){
+      try {
+        driveTokenClient = google.accounts.oauth2.initTokenClient({
+          client_id: clientId,
+          scope: 'https://www.googleapis.com/auth/drive.readonly',
+          callback: () => {}
+        });
+      } catch(e){
+        console.error(e);
+        setDriveStatus('That Client ID looks invalid — double check it in the setup panel.', true);
+        driveTokenClient = null;
+        return;
+      }
+    }
+
+    driveTokenClient.callback = (resp) => {
+      if (resp.error){
+        setDriveStatus('Google sign-in was cancelled or failed.', true);
+        return;
+      }
+      driveAccessToken = resp.access_token;
+      setDriveStatus('Opening Drive…', false);
+      showDrivePicker(apiKey);
+    };
+    driveTokenClient.requestAccessToken({ prompt: driveAccessToken ? '' : 'consent' });
+  }
+
+  function showDrivePicker(apiKey){
+    try {
+      const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
+        .setMimeTypes('application/pdf,image/png,image/jpeg,text/html')
+        .setSelectFolderEnabled(false);
+      const picker = new google.picker.PickerBuilder()
+        .addView(view)
+        .setOAuthToken(driveAccessToken)
+        .setDeveloperKey(apiKey)
+        .setCallback(handleDrivePicked)
+        .build();
+      picker.setVisible(true);
+      setDriveStatus('');
+    } catch(e){
+      console.error(e);
+      setDriveStatus('Could not open the Drive picker — check your API key.', true);
+    }
+  }
+
+  async function handleDrivePicked(data){
+    if (!google.picker || data.action !== google.picker.Action.PICKED) return;
+    const docs = data.docs || [];
+    if (docs.length === 0) return;
+
+    setDriveStatus(`Downloading ${docs.length} file${docs.length > 1 ? 's' : ''} from Drive…`, false);
+    const downloaded = [];
+    for (const doc of docs){
+      try {
+        const resp = await fetch(`https://www.googleapis.com/drive/v3/files/${doc.id}?alt=media`, {
+          headers: { Authorization: 'Bearer ' + driveAccessToken }
+        });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const blob = await resp.blob();
+        const mime = doc.mimeType || blob.type || 'application/octet-stream';
+        downloaded.push(new File([blob], doc.name, { type: mime }));
+      } catch(e){
+        console.error(e);
+        setDriveStatus(`Couldn't download "${doc.name}" from Drive.`, true);
+      }
+    }
+    if (downloaded.length){
+      await addFiles(downloaded);
+      setDriveStatus(`Added ${downloaded.length} file${downloaded.length > 1 ? 's' : ''} from Drive.`, false);
+      setTimeout(() => setDriveStatus(), 3000);
+    }
+  }
 
   render();
 })();
