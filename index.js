@@ -1,3 +1,25 @@
+  // docx sometimes fails to load from the primary CDN — fall back automatically.
+  window.__docxReady = (async function ensureDocx(){
+    if (typeof docx !== 'undefined') return;
+    const fallbacks = [
+      'https://unpkg.com/docx@8.5.0/build/index.umd.min.js',
+      'https://cdnjs.cloudflare.com/ajax/libs/docx/8.5.0/docx.umd.min.js'
+    ];
+    for (const src of fallbacks){
+      if (typeof docx !== 'undefined') return;
+      try {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = src;
+          s.onload = resolve;
+          s.onerror = reject;
+          document.head.appendChild(s);
+        });
+      } catch(e){ /* try next fallback */ }
+    }
+  })();
+</script>
+<script>
 (function(){
   if (window.pdfjsLib) {
     pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
@@ -42,6 +64,60 @@
     return div.innerHTML;
   }
 
+  async function renderHtmlToImageFile(file){
+    if (typeof html2canvas === 'undefined'){
+      throw new Error('HTML rendering library failed to load — check your connection and reload.');
+    }
+    const htmlText = await file.text();
+    const pageWidth = 794; // ~A4 width at 96dpi
+
+    const holder = document.createElement('div');
+    holder.style.position = 'fixed';
+    holder.style.left = '-99999px';
+    holder.style.top = '0';
+    document.body.appendChild(holder);
+
+    const iframe = document.createElement('iframe');
+    iframe.style.width = pageWidth + 'px';
+    iframe.style.height = '600px';
+    iframe.style.border = 'none';
+    holder.appendChild(iframe);
+
+    try {
+      await new Promise((resolve, reject) => {
+        iframe.onload = resolve;
+        iframe.onerror = reject;
+        iframe.srcdoc = htmlText;
+      });
+      // Let layout/fonts settle, then size the iframe to its real content height.
+      await new Promise(r => setTimeout(r, 150));
+      const doc = iframe.contentDocument;
+      const fullHeight = Math.max(
+        doc.body ? doc.body.scrollHeight : 0,
+        doc.documentElement.scrollHeight,
+        400
+      );
+      iframe.style.height = fullHeight + 'px';
+      await new Promise(r => setTimeout(r, 50));
+
+      const canvas = await html2canvas(doc.body, {
+        backgroundColor: '#ffffff',
+        width: pageWidth,
+        windowWidth: pageWidth,
+        height: fullHeight,
+        scale: 2,
+        useCORS: true
+      });
+
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+      if (!blob) throw new Error('Rendering produced an empty image.');
+      const baseName = file.name.replace(/\.(html?|htm)$/i, '') || 'page';
+      return new File([blob], baseName + '.png', { type: 'image/png' });
+    } finally {
+      document.body.removeChild(holder);
+    }
+  }
+
   async function extractZip(zipFile){
     if (typeof JSZip === 'undefined'){
       throw new Error('Zip library failed to load — check your connection and reload.');
@@ -61,6 +137,9 @@
         const blob = await entry.async('blob');
         const type = /\.png$/i.test(baseName) ? 'image/png' : 'image/jpeg';
         extracted.push(new File([blob], baseName, { type }));
+      } else if (/\.(html?|htm)$/i.test(baseName)){
+        const blob = await entry.async('blob');
+        extracted.push(new File([blob], baseName, { type: 'text/html' }));
       }
     }
     return extracted;
@@ -77,7 +156,7 @@
         try {
           const inner = await extractZip(file);
           if (inner.length === 0){
-            setDropStatus(`No PDFs or images found inside ${file.name}.`, true);
+            setDropStatus(`No PDFs, images, or HTML files found inside ${file.name}.`, true);
           }
           expanded.push(...inner);
         } catch(e){
@@ -90,7 +169,25 @@
     }
     if (dropSub.textContent.startsWith('Extracting')) setDropStatus();
 
+    const ready = [];
     for (const file of expanded){
+      const isHtml = file.type === 'text/html' || /\.(html?|htm)$/i.test(file.name);
+      if (isHtml){
+        setDropStatus(`Rendering ${file.name}…`, false);
+        try {
+          const imgFile = await renderHtmlToImageFile(file);
+          ready.push(imgFile);
+        } catch(e){
+          console.error(e);
+          setDropStatus(`Could not render ${file.name} — check it's valid HTML.`, true);
+        }
+      } else {
+        ready.push(file);
+      }
+    }
+    if (dropSub.textContent.startsWith('Rendering')) setDropStatus();
+
+    for (const file of ready){
       const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
       const isImage = file.type === 'image/png' || file.type === 'image/jpeg' || /\.(png|jpe?g)$/i.test(file.name);
       if (!isPdf && !isImage) continue;
@@ -100,6 +197,7 @@
         type: isPdf ? 'pdf' : 'image',
         thumb: null,
         pageCount: null,
+        hash: null,
         isDuplicate: false,
         dismissedDuplicate: false
       };
@@ -109,6 +207,10 @@
       } else {
         generatePdfThumb(item);
       }
+      computeFileHash(file).then(hash => {
+        item.hash = hash;
+        render();
+      });
     }
     render();
   }
@@ -132,15 +234,30 @@
     }
   }
 
+  async function computeFileHash(file){
+    try {
+      const buf = await file.arrayBuffer();
+      const digest = await crypto.subtle.digest('SHA-256', buf);
+      return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch(e){
+      console.error('Hashing failed', e);
+      return null;
+    }
+  }
+
   function recomputeDuplicates(){
     const seen = new Map();
     for (const item of files){
-      const key = item.file.name.trim().toLowerCase() + '|' + item.file.size;
-      if (seen.has(key)){
+      if (!item.hash){
+        // Content check still running — don't flag until we actually know.
+        item.isDuplicate = false;
+        continue;
+      }
+      if (seen.has(item.hash)){
         item.isDuplicate = !item.dismissedDuplicate;
       } else {
         item.isDuplicate = false;
-        seen.set(key, true);
+        seen.set(item.hash, true);
       }
     }
   }
@@ -164,7 +281,7 @@
       const pages = item.pageCount ? ` · ${item.pageCount} page${item.pageCount > 1 ? 's' : ''}` : '';
       const dupWarning = item.isDuplicate ? `
             <div class="dup-warning">
-              <span>⚠ This looks like a duplicate of a file already in the list.</span>
+              <span>⚠ Same content as another file already added (checked, not just the name).</span>
               <span class="dup-actions">
                 <button class="dup-remove" data-id="${item.id}">Remove this</button>
                 <button class="dup-keep" data-id="${item.id}">Keep anyway</button>
